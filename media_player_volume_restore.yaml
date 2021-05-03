@@ -1,0 +1,106 @@
+#############################################################################
+#                    Media Player Volume Restore Package                    #
+#############################################################################
+#  Author: Fyre  //  Date Created: February 10, 2019  //  Version: 1        #
+#---------------------------------------------------------------------------#
+# Contents:                                                                 #
+#   - Input Text: media_player_original_volume - for purpose of a variable. #
+#   - Automation: play_media - should act as a demonstration and you should #
+#     use the service: script.tts and associated data in your automation.   #
+#   - Script: tts - will save the current volume, input the desired volume, #
+#     play the message, and restore the original volume.                    #
+#---------------------------------------------------------------------------#
+# Explanation of 'media_player.turn_off' then 'media_player.turn_on':       #
+#   - Due to media_player.turn_on acting as a toggle instead of only        #
+#       turning on the media_player, I've had to include a turn off script  #
+#       to make sure that we can turn it on afterwords everytime.           #
+#       https://github.com/home-assistant/home-assistant/issues/20782       #
+#---------------------------------------------------------------------------#
+# IMPORTANT NOTE:                                                           #
+# -- THIS SCRIPT WAS UPLOADED TO SHARE AN OLD CONCEPT, I AM NOT SURE IT IS  #
+#    STILL THE BEST METHOD OR IF IT IS CORRECT ANY LONGER.                  #
+#############################################################################
+
+input_text:
+  media_player_original_volume:
+    name: Media Player's Original Volume
+
+automation:
+  - alias: play_media
+
+    initial_state: 'on'
+
+    trigger:
+      # Anything you'd like.
+
+    action:
+      service: script.tts_engine
+      data:
+        select_media_player: ghm_basement_common_area               # select any single media_player. Do not include domain (i.e. media_player.)
+        desired_volume: '0.1'                                       # select desired volume from 0.0 - 1.0
+        desired_message: 'This is a test'                           # your message here.
+
+script:
+  tts_engine:
+  sequence:
+    # if media_player is on, then turn it off.
+    - service: media_player.turn_off
+      data_template:
+        entity_id: '{{"media_player."~select_media_player}}'
+
+    # wait until the media_player is off
+    - wait_template: "{{ states.media_player[select_media_player].state == 'off' }}"
+      timeout: '00:00:05'
+      continue_on_timeout: 'true'
+
+    # if media_player is off, then turn it on.
+    - service: media_player.turn_on
+      data_template:
+        entity_id: '{{"media_player."~select_media_player}}'
+
+    # wait until the media_player is on
+    - wait_template: "{{ states.media_player[select_media_player].state != 'off' }}"
+      timeout: '00:00:05' # if it doesn't turn on in 5 seconds, then stop script
+      continue_on_timeout: 'false'
+
+    # get current media_player volume
+    - service: input_text.set_value
+      data_template:
+        entity_id: input_text.media_player_original_volume
+        value: "{{states.media_player[select_media_player].attributes.volume_level }}"
+
+    # wait until the current volume has been saved.
+    - wait_template: "{{ (states.input_text.media_player_original_volume.state | float) == (states.media_player[select_media_player].attributes.volume_level | float ) }}"
+      timeout: '00:00:05' # if it doesn't save the volume in 5 seconds, then stop script
+      continue_on_timeout: 'false'
+
+    # set new media_player volume
+    - service: media_player.volume_set
+      data_template:
+        entity_id: '{{"media_player."~select_media_player}}'
+        volume_level: '{{desired_volume}}'
+
+    # wait until the new volume has been set.
+    - wait_template: "{{ (states.input_text.media_player_original_volume.state | float) != (states.media_player[select_media_player].attributes.volume_level | float ) }}"
+      timeout: '00:00:05' # if the 'desired_volume' is already the same as the current volume, then we'll continue after 5 seconds.
+      continue_on_timeout: 'true'
+
+    # play message
+    - service: tts.google_say
+      data_template:
+        entity_id: '{{"media_player."~select_media_player}}'
+        message: '{{desired_message}}'
+
+    # wait to make sure that the media_player is playing the tts message (usually starts at 'idle' until it is prepared)
+    - wait_template: "{{ states.media_player[select_media_player].state == 'playing' }}"
+      timeout: '00:00:05' # if it doesn't start playing in 5 seconds, then stop script
+      continue_on_timeout: 'false'
+
+    # wait until the media_player is finished playing tts message (returns to 'idle')
+    - wait_template: "{{ states.media_player[select_media_player].state != 'playing' }}"
+
+    # set original media_player volume
+    - service: media_player.volume_set
+      data_template:
+        entity_id: '{{"media_player."~select_media_player}}'
+        volume_level: '{{states.input_text.media_player_original_volume.state}}'
